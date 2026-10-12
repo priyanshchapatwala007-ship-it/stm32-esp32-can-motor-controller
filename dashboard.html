@@ -1,0 +1,502 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Motor Controller Dashboard</title>
+    <!-- MQTT.js over WebSocket -->
+    <script src="https://unpkg.com/mqtt/dist/mqtt.min.js"></script>
+    <!-- Chart.js for live plotting -->
+    <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
+    <style>
+        * { margin: 0; padding: 0; box-sizing: border-box; }
+        body {
+            font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
+            background: #0f1923;
+            color: #e0e0e0;
+            min-height: 100vh;
+        }
+
+        /* --- Header --- */
+        .header {
+            background: linear-gradient(135deg, #1a2a3a 0%, #0d1b2a 100%);
+            padding: 20px 30px;
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            border-bottom: 2px solid #1b3a4b;
+        }
+        .header h1 { font-size: 1.4em; color: #00d4ff; }
+        .header .status-group { display: flex; gap: 20px; align-items: center; }
+        .status-badge {
+            display: flex; align-items: center; gap: 8px;
+            padding: 6px 14px;
+            border-radius: 20px;
+            font-size: 0.8em;
+            font-weight: 600;
+            background: #1a2a3a;
+            border: 1px solid #2a3a4a;
+        }
+        .status-dot {
+            width: 10px; height: 10px;
+            border-radius: 50%;
+            background: #ff4444;
+            transition: background 0.3s;
+        }
+        .status-dot.online { background: #00ff88; box-shadow: 0 0 8px #00ff8855; }
+
+        /* --- Main Grid --- */
+        .dashboard {
+            display: grid;
+            grid-template-columns: 1fr 1fr 1fr;
+            grid-template-rows: auto auto;
+            gap: 20px;
+            padding: 20px;
+            max-width: 1400px;
+            margin: 0 auto;
+        }
+
+        .card {
+            background: #1a2a3a;
+            border-radius: 12px;
+            padding: 24px;
+            border: 1px solid #2a3a4a;
+            box-shadow: 0 4px 20px rgba(0,0,0,0.3);
+        }
+        .card h2 {
+            font-size: 0.85em;
+            text-transform: uppercase;
+            letter-spacing: 1.5px;
+            color: #7a8a9a;
+            margin-bottom: 16px;
+        }
+
+        /* --- Gauge Card --- */
+        .gauge-card { grid-column: 1 / 2; text-align: center; }
+        .gauge-container {
+            position: relative;
+            width: 200px; height: 200px;
+            margin: 0 auto 10px auto;
+        }
+        .gauge-svg { transform: rotate(-90deg); }
+        .gauge-bg { fill: none; stroke: #2a3a4a; stroke-width: 14; }
+        .gauge-fill {
+            fill: none; stroke: #00d4ff; stroke-width: 14;
+            stroke-linecap: round;
+            stroke-dasharray: 502.65; /* 2 * PI * 80 */
+            stroke-dashoffset: 502.65;
+            transition: stroke-dashoffset 0.4s ease, stroke 0.4s ease;
+        }
+        .gauge-text {
+            position: absolute;
+            top: 50%; left: 50%;
+            transform: translate(-50%, -50%);
+            text-align: center;
+        }
+        .gauge-value { font-size: 2.8em; font-weight: 700; color: #00d4ff; }
+        .gauge-unit { font-size: 0.9em; color: #7a8a9a; }
+
+        /* --- Stats Cards --- */
+        .stats-card { grid-column: 2 / 3; }
+        .stat-row {
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            padding: 14px 0;
+            border-bottom: 1px solid #2a3a4a;
+        }
+        .stat-row:last-child { border-bottom: none; }
+        .stat-label { color: #7a8a9a; font-size: 0.9em; }
+        .stat-value { font-size: 1.3em; font-weight: 600; }
+        .stat-value.rpm { color: #00d4ff; }
+        .stat-value.target { color: #ffaa00; }
+        .stat-value.error-val { color: #ff6b6b; }
+        .stat-value.pwm { color: #a78bfa; }
+
+        /* --- Control Card --- */
+        .control-card { grid-column: 3 / 4; }
+        .slider-group { margin-bottom: 20px; }
+        .slider-group label {
+            display: flex; justify-content: space-between;
+            font-size: 0.9em; color: #7a8a9a; margin-bottom: 8px;
+        }
+        .slider-group label span { color: #ffaa00; font-weight: 600; }
+        input[type="range"] {
+            -webkit-appearance: none;
+            width: 100%; height: 8px;
+            border-radius: 4px;
+            background: #2a3a4a;
+            outline: none;
+        }
+        input[type="range"]::-webkit-slider-thumb {
+            -webkit-appearance: none;
+            width: 22px; height: 22px;
+            border-radius: 50%;
+            background: #ffaa00;
+            cursor: pointer;
+            box-shadow: 0 0 10px #ffaa0044;
+        }
+        .btn-group { display: flex; gap: 10px; margin-top: 16px; }
+        .btn {
+            flex: 1; padding: 12px;
+            border: none; border-radius: 8px;
+            font-size: 0.95em; font-weight: 600;
+            cursor: pointer; transition: all 0.2s;
+        }
+        .btn-send { background: #00d4ff; color: #0f1923; }
+        .btn-send:hover { background: #00b8e6; transform: translateY(-1px); }
+        .btn-stop { background: #ff4444; color: #fff; }
+        .btn-stop:hover { background: #cc3333; transform: translateY(-1px); }
+        .btn-reverse { background: #a78bfa; color: #0f1923; }
+        .btn-reverse:hover { background: #8b6fe0; transform: translateY(-1px); }
+
+        /* --- Chart Card --- */
+        .chart-card { grid-column: 1 / 4; height: 320px; }
+        .chart-card canvas { max-height: 260px; }
+
+        /* --- Log Card --- */
+        .log-card { grid-column: 1 / 4; }
+        .log-area {
+            background: #0d1b2a;
+            border-radius: 8px;
+            padding: 14px;
+            font-family: 'Consolas', 'Courier New', monospace;
+            font-size: 0.8em;
+            max-height: 180px;
+            overflow-y: auto;
+            border: 1px solid #2a3a4a;
+        }
+        .log-entry { padding: 3px 0; border-bottom: 1px solid #1a2a3a; }
+        .log-time { color: #5a6a7a; }
+        .log-topic { color: #00d4ff; }
+        .log-msg { color: #c0c0c0; }
+
+        /* --- Responsive --- */
+        @media (max-width: 900px) {
+            .dashboard { grid-template-columns: 1fr; }
+            .gauge-card, .stats-card, .control-card, .chart-card, .log-card { grid-column: 1 / 2; }
+        }
+    </style>
+</head>
+<body>
+
+<!-- ===== HEADER ===== -->
+<div class="header">
+    <h1>⚙️ CAN Motor Controller — Live Dashboard</h1>
+    <div class="status-group">
+        <div class="status-badge">
+            <div class="status-dot" id="mqttDot"></div>
+            <span id="mqttStatus">MQTT Disconnected</span>
+        </div>
+        <div class="status-badge">
+            <div class="status-dot" id="canDot"></div>
+            <span id="canStatus">CAN No Data</span>
+        </div>
+    </div>
+</div>
+
+<!-- ===== DASHBOARD GRID ===== -->
+<div class="dashboard">
+
+    <!-- Gauge -->
+    <div class="card gauge-card">
+        <h2>Current RPM</h2>
+        <div class="gauge-container">
+            <svg class="gauge-svg" width="200" height="200" viewBox="0 0 200 200">
+                <circle class="gauge-bg" cx="100" cy="100" r="80"></circle>
+                <circle class="gauge-fill" id="gaugeFill" cx="100" cy="100" r="80"></circle>
+            </svg>
+            <div class="gauge-text">
+                <div class="gauge-value" id="gaugeValue">0</div>
+                <div class="gauge-unit">RPM</div>
+            </div>
+        </div>
+        <div style="color:#5a6a7a; font-size:0.8em;">Max: 300 RPM</div>
+    </div>
+
+    <!-- Stats -->
+    <div class="card stats-card">
+        <h2>Telemetry</h2>
+        <div class="stat-row">
+            <span class="stat-label">Actual RPM</span>
+            <span class="stat-value rpm" id="statRpm">0.00</span>
+        </div>
+        <div class="stat-row">
+            <span class="stat-label">Target RPM</span>
+            <span class="stat-value target" id="statTarget">0.00</span>
+        </div>
+        <div class="stat-row">
+            <span class="stat-label">Error (Target - Actual)</span>
+            <span class="stat-value error-val" id="statError">0.00</span>
+        </div>
+        <div class="stat-row">
+            <span class="stat-label">Messages Received</span>
+            <span class="stat-value pwm" id="statMsgCount">0</span>
+        </div>
+        <div class="stat-row">
+            <span class="stat-label">Last Update</span>
+            <span class="stat-value" id="statLastUpdate" style="font-size:0.9em; color:#5a6a7a;">—</span>
+        </div>
+    </div>
+
+    <!-- Controls -->
+    <div class="card control-card">
+        <h2>Motor Control</h2>
+        <div class="slider-group">
+            <label>Speed Setpoint <span id="sliderVal">0 RPM</span></label>
+            <input type="range" id="speedSlider" min="0" max="300" value="0">
+        </div>
+        <div class="btn-group">
+            <button class="btn btn-send" onclick="sendSetpoint()">▶ Send</button>
+            <button class="btn btn-stop" onclick="emergencyStop()">■ STOP</button>
+        </div>
+        <div class="btn-group" style="margin-top: 8px;">
+            <button class="btn btn-reverse" onclick="sendReverse()">↺ Reverse</button>
+        </div>
+        <div style="margin-top:16px; font-size:0.8em; color:#5a6a7a;">
+            Publishes to <code>robot/motor/setpoint</code>
+        </div>
+    </div>
+
+    <!-- Live Chart -->
+    <div class="card chart-card">
+        <h2>RPM Over Time (Live)</h2>
+        <canvas id="rpmChart"></canvas>
+    </div>
+
+    <!-- Event Log -->
+    <div class="card log-card">
+        <h2>Event Log</h2>
+        <div class="log-area" id="logArea"></div>
+    </div>
+</div>
+
+<script>
+// =====================================================
+//  CONFIGURATION
+// =====================================================
+const BROKER_URL = "wss://broker.hivemq.com:8884/mqtt"; // Free public broker (WebSocket Secure)
+const TOPIC_TELEMETRY = "robot/motor/telemetry";
+const TOPIC_SETPOINT  = "robot/motor/setpoint";
+const MAX_RPM = 300;
+const CHART_POINTS = 60; // 60 data points on chart
+
+// =====================================================
+//  MQTT CONNECTION
+// =====================================================
+let mqttClient = null;
+let msgCount = 0;
+let lastCanDataTime = 0;
+
+function connectMQTT() {
+    const clientId = "dashboard_" + Math.random().toString(16).substr(2, 8);
+    mqttClient = mqtt.connect(BROKER_URL, {
+        clientId: clientId,
+        clean: true,
+        connectTimeout: 5000,
+        reconnectPeriod: 3000,
+    });
+
+    mqttClient.on("connect", () => {
+        log("MQTT", "Connected to broker");
+        document.getElementById("mqttDot").classList.add("online");
+        document.getElementById("mqttStatus").textContent = "MQTT Connected";
+        mqttClient.subscribe(TOPIC_TELEMETRY, (err) => {
+            if (!err) log("MQTT", "Subscribed to " + TOPIC_TELEMETRY);
+        });
+    });
+
+    mqttClient.on("error", (err) => {
+        log("ERROR", "MQTT error: " + err.message);
+        document.getElementById("mqttDot").classList.remove("online");
+        document.getElementById("mqttStatus").textContent = "MQTT Error";
+    });
+
+    mqttClient.on("close", () => {
+        document.getElementById("mqttDot").classList.remove("online");
+        document.getElementById("mqttStatus").textContent = "MQTT Disconnected";
+    });
+
+    mqttClient.on("message", (topic, message) => {
+        if (topic === TOPIC_TELEMETRY) {
+            try {
+                const data = JSON.parse(message.toString());
+                updateDashboard(data.rpm, data.target);
+            } catch (e) {
+                log("ERROR", "Bad JSON: " + message.toString());
+            }
+        }
+    });
+}
+
+// =====================================================
+//  DASHBOARD UPDATE
+// =====================================================
+function updateDashboard(rpm, target) {
+    msgCount++;
+    lastCanDataTime = Date.now();
+
+    // CAN status indicator
+    document.getElementById("canDot").classList.add("online");
+    document.getElementById("canStatus").textContent = "CAN Active";
+
+    // Stats
+    document.getElementById("statRpm").textContent = rpm.toFixed(2);
+    document.getElementById("statTarget").textContent = target.toFixed(2);
+    document.getElementById("statError").textContent = (target - rpm).toFixed(2);
+    document.getElementById("statMsgCount").textContent = msgCount;
+    document.getElementById("statLastUpdate").textContent = new Date().toLocaleTimeString();
+
+    // Gauge
+    const clamped = Math.min(Math.abs(rpm), MAX_RPM);
+    const pct = clamped / MAX_RPM;
+    const circumference = 2 * Math.PI * 80;
+    const offset = circumference * (1 - pct);
+    const gaugeFill = document.getElementById("gaugeFill");
+    gaugeFill.style.strokeDashoffset = offset;
+    // Color: cyan→green→yellow→red
+    if (pct < 0.5) gaugeFill.style.stroke = "#00d4ff";
+    else if (pct < 0.8) gaugeFill.style.stroke = "#ffaa00";
+    else gaugeFill.style.stroke = "#ff4444";
+
+    document.getElementById("gaugeValue").textContent = Math.round(rpm);
+
+    // Chart
+    addChartData(rpm, target);
+}
+
+// =====================================================
+//  CHART SETUP (Chart.js)
+// =====================================================
+const ctx = document.getElementById("rpmChart").getContext("2d");
+const rpmChart = new Chart(ctx, {
+    type: "line",
+    data: {
+        labels: Array(CHART_POINTS).fill(""),
+        datasets: [
+            {
+                label: "Actual RPM",
+                data: Array(CHART_POINTS).fill(null),
+                borderColor: "#00d4ff",
+                backgroundColor: "rgba(0,212,255,0.1)",
+                borderWidth: 2,
+                pointRadius: 0,
+                tension: 0.3,
+                fill: true,
+            },
+            {
+                label: "Target RPM",
+                data: Array(CHART_POINTS).fill(null),
+                borderColor: "#ffaa00",
+                borderWidth: 2,
+                pointRadius: 0,
+                borderDash: [6, 3],
+                tension: 0,
+                fill: false,
+            },
+        ],
+    },
+    options: {
+        responsive: true,
+        maintainAspectRatio: false,
+        animation: { duration: 200 },
+        scales: {
+            x: { display: false },
+            y: {
+                min: -50,
+                max: MAX_RPM + 50,
+                grid: { color: "#2a3a4a" },
+                ticks: { color: "#7a8a9a" },
+            },
+        },
+        plugins: {
+            legend: { labels: { color: "#7a8a9a", usePointStyle: true } },
+        },
+    },
+});
+
+function addChartData(rpm, target) {
+    const now = new Date().toLocaleTimeString();
+    rpmChart.data.labels.push(now);
+    rpmChart.data.datasets[0].data.push(rpm);
+    rpmChart.data.datasets[1].data.push(target);
+    // Keep chart window fixed
+    if (rpmChart.data.labels.length > CHART_POINTS) {
+        rpmChart.data.labels.shift();
+        rpmChart.data.datasets[0].data.shift();
+        rpmChart.data.datasets[1].data.shift();
+    }
+    rpmChart.update();
+}
+
+// =====================================================
+//  CONTROLS
+// =====================================================
+const slider = document.getElementById("speedSlider");
+slider.addEventListener("input", () => {
+    document.getElementById("sliderVal").textContent = slider.value + " RPM";
+});
+
+function sendSetpoint() {
+    const val = parseFloat(slider.value);
+    if (mqttClient && mqttClient.connected) {
+        mqttClient.publish(TOPIC_SETPOINT, val.toString());
+        log("TX", "Setpoint → " + val + " RPM");
+    } else {
+        log("ERROR", "MQTT not connected");
+    }
+}
+
+function emergencyStop() {
+    slider.value = 0;
+    document.getElementById("sliderVal").textContent = "0 RPM";
+    if (mqttClient && mqttClient.connected) {
+        mqttClient.publish(TOPIC_SETPOINT, "0");
+        log("TX", "🛑 EMERGENCY STOP sent");
+    } else {
+        log("ERROR", "MQTT not connected");
+    }
+}
+
+function sendReverse() {
+    const val = -Math.abs(parseFloat(slider.value));
+    if (mqttClient && mqttClient.connected) {
+        mqttClient.publish(TOPIC_SETPOINT, val.toString());
+        log("TX", "Reverse Setpoint → " + val + " RPM");
+    } else {
+        log("ERROR", "MQTT not connected");
+    }
+}
+
+// =====================================================
+//  EVENT LOG
+// =====================================================
+function log(topic, msg) {
+    const area = document.getElementById("logArea");
+    const time = new Date().toLocaleTimeString();
+    const entry = document.createElement("div");
+    entry.classList.add("log-entry");
+    entry.innerHTML = `<span class="log-time">[${time}]</span> <span class="log-topic">[${topic}]</span> <span class="log-msg">${msg}</span>`;
+    area.prepend(entry); // newest on top
+    // Limit log entries
+    while (area.children.length > 100) area.removeChild(area.lastChild);
+}
+
+// =====================================================
+//  CAN TIMEOUT DETECTOR
+// =====================================================
+setInterval(() => {
+    if (Date.now() - lastCanDataTime > 3000 && lastCanDataTime > 0) {
+        document.getElementById("canDot").classList.remove("online");
+        document.getElementById("canStatus").textContent = "CAN Timeout";
+    }
+}, 1000);
+
+// =====================================================
+//  INIT
+// =====================================================
+connectMQTT();
+log("SYSTEM", "Dashboard initialized. Connecting to MQTT broker...");
+</script>
+</body>
+</html>

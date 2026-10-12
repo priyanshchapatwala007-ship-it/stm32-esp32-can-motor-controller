@@ -1,0 +1,31 @@
+# Operating System Files
+.DS_Store
+Thumbs.db
+
+# Python
+__pycache__/
+*.py[cod]
+*$py.class
+venv/
+.env
+
+# Build outputs (Embedded / C / C++)
+build/
+bin/
+obj/
+*.o
+*.d
+*.elf
+*.hex
+*.bin
+*.map
+
+# IDEs and Editors
+.vscode/
+.idea/
+*.swp
+*.swo
+
+# Documentation / Private PDFs
+*.pdf
+
