@@ -25,7 +25,3 @@ obj/
 .idea/
 *.swp
 *.swo
-
-# Documentation / Private PDFs
-*.pdf
-
